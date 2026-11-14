@@ -6,6 +6,7 @@ from typing import Any
 from app.store import store
 
 MODULE = "model"
+CODE_FIELDS = ["模型编号"]
 REQUIRED_FIELDS = ["模型编号", "模型名称", "模型类型"]
 STATUS_ORDER = ["草稿", "训练完成", "已部署", "已下线"]
 ACTION_RULES = {"部署模型": "训练完成", "下线模型": "已部署", "归档模型": "已下线"}
@@ -30,8 +31,9 @@ class ModelService:
         start = max(page - 1, 0) * size
         return rows[start:start + size], total
 
-    def get_entry(self, entry_id: int) -> dict[str, Any] | None:
-        return store.find(MODULE, entry_id)
+    def get_entry(self, entry_id: int | str) -> dict[str, Any] | None:
+        """兼容内部自增 id 与业务编号（如 MART-0001）两种定位方式。"""
+        return self._resolve(entry_id)
 
     def create_entry(self, values: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
         missing = [field for field in REQUIRED_FIELDS if not str(values.get(field) or "").strip()]
@@ -46,8 +48,8 @@ class ModelService:
         rows.append(entry)
         return entry, []
 
-    def run_action(self, entry_id: int, action: str) -> tuple[dict[str, Any] | None, str]:
-        entry = store.find(MODULE, entry_id)
+    def run_action(self, entry_id: int | str, action: str) -> tuple[dict[str, Any] | None, str]:
+        entry = self._resolve(entry_id)
         if entry is None:
             return None, f"模型注册 {entry_id} 不存在或已归档"
         if action not in ACTION_RULES:
@@ -59,3 +61,17 @@ class ModelService:
         entry["pending"] = target != STATUS_ORDER[-1]
         entry["abnormal"] = action in NEGATIVE_ACTIONS
         return entry, f"模型注册已{action}"
+
+    @staticmethod
+    def _resolve(ref: int | str) -> dict[str, Any] | None:
+        """按内部 id 定位，失败时按业务编号再找一次。"""
+        text = str(ref or "").strip()
+        if text.isdigit():
+            found = store.find(MODULE, int(text))
+            if found is not None:
+                return found
+        for field in CODE_FIELDS:
+            found = store.find_by_code(MODULE, field, text)
+            if found is not None:
+                return found
+        return None

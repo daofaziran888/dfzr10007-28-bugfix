@@ -6,6 +6,7 @@ from typing import Any
 from app.store import store
 
 MODULE = "compare"
+CODE_FIELDS = ["方案编号"]
 REQUIRED_FIELDS = ["方案编号", "对比指标", "基准周期"]
 STATUS_ORDER = ["草稿", "已启用", "已暂停", "已关闭"]
 ACTION_RULES = {"启用方案": "草稿", "暂停方案": "已启用", "关闭方案": "已暂停"}
@@ -30,8 +31,9 @@ class CompareService:
         start = max(page - 1, 0) * size
         return rows[start:start + size], total
 
-    def get_entry(self, entry_id: int) -> dict[str, Any] | None:
-        return store.find(MODULE, entry_id)
+    def get_entry(self, entry_id: int | str) -> dict[str, Any] | None:
+        """兼容内部自增 id 与业务编号（如 MART-0001）两种定位方式。"""
+        return self._resolve(entry_id)
 
     def create_entry(self, values: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
         missing = [field for field in REQUIRED_FIELDS if not str(values.get(field) or "").strip()]
@@ -46,8 +48,8 @@ class CompareService:
         rows.append(entry)
         return entry, []
 
-    def run_action(self, entry_id: int, action: str) -> tuple[dict[str, Any] | None, str]:
-        entry = store.find(MODULE, entry_id)
+    def run_action(self, entry_id: int | str, action: str) -> tuple[dict[str, Any] | None, str]:
+        entry = self._resolve(entry_id)
         if entry is None:
             return None, f"对比方案 {entry_id} 不存在或已归档"
         if action not in ACTION_RULES:
@@ -59,3 +61,17 @@ class CompareService:
         entry["pending"] = target != STATUS_ORDER[-1]
         entry["abnormal"] = action in NEGATIVE_ACTIONS
         return entry, f"对比方案已{action}"
+
+    @staticmethod
+    def _resolve(ref: int | str) -> dict[str, Any] | None:
+        """按内部 id 定位，失败时按业务编号再找一次。"""
+        text = str(ref or "").strip()
+        if text.isdigit():
+            found = store.find(MODULE, int(text))
+            if found is not None:
+                return found
+        for field in CODE_FIELDS:
+            found = store.find_by_code(MODULE, field, text)
+            if found is not None:
+                return found
+        return None
